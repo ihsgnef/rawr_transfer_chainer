@@ -24,7 +24,7 @@ URL_IMDB = 'https://ai.stanford.edu/~amaas/data/sentiment/aclImdb_v1.tar.gz'
 URL_SNLI = 'https://nlp.stanford.edu/projects/snli/snli_1.0.zip'
 URL_OTHER_BASE = 'https://raw.githubusercontent.com/harvardnlp/sent-conv-torch/master/data/'  # NOQA
 
-DATA_DIR = 'data'
+DATA_DIR = os.path.join(open('root').readline().strip(), 'data')
 os.makedirs(DATA_DIR, exist_ok=True)
 
 def download_snli():

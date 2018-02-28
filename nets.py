@@ -43,9 +43,9 @@ def sequence_embed(embed, xs, dropout=0.):
     return exs
 
 
-class LSTMEncoder(chainer.Chain):
+class BiLSTMEncoder(chainer.Chain):
 
-    """A LSTM-RNN Encoder with Word Embedding.
+    """A Bi-LSTM-RNN Encoder with Word Embedding.
 
     This model encodes a sentence sequentially using LSTM.
 
@@ -58,58 +58,35 @@ class LSTMEncoder(chainer.Chain):
     """
 
     def __init__(self, n_layers, n_vocab, n_units, dropout=0.1):
-        super(LSTMEncoder, self).__init__()
+        super(BiLSTMEncoder, self).__init__()
         with self.init_scope():
             self.embed = L.EmbedID(n_vocab, n_units,
                                    initialW=embed_init)
-            self.encoder = L.NStepLSTM(n_layers, n_units, n_units, dropout)
+            self.encoder = L.NStepBiLSTM(n_layers, n_units, n_units, dropout)
 
         self.n_layers = n_layers
         self.out_units = n_units
         self.dropout = dropout
 
-    # def __call__(self, xs, get_embed=False):
-    #     exs = sequence_embed(self.embed, xs, self.dropout)
-    #     xp = chainer.cuda.get_array_module(*exs)
-    #     indices = n_step_rnn.argsort_list_descent(exs)
-    #     indices_array = xp.array(indices)
-    #     exs = n_step_rnn.permutate_list(exs, indices, inv=False)
-    #     exs = transpose_sequence.transpose_sequence(exs)
-    #     hs = []
-    #     h, c = None, None
-    #     for ex in exs:
-    #         h, c, _ = self.encoder(h, c, [ex])
-    #         # 2 (bi), 1, self.out_units
-    #         hs.append(F.flatten(h))
-    #     if get_embed:
-    #         return hs, exs
-    #     return hs
-
     def __call__(self, xs, get_embed=False):
         exs = sequence_embed(self.embed, xs, self.dropout)
-        last_h, last_c, ys = self.encoder(None, None, exs)
-        assert(last_h.shape == (self.n_layers, len(xs), self.out_units))
-        concat_outputs = last_h[-1]
+        _, _, ys = self.encoder(None, None, exs)
+        assert len(ys) == len(xs)
         if get_embed:
-            return concat_outputs, exs
-        return concat_outputs
+            return ys, exs
+        return ys
 
 
 class MLP(chainer.ChainList):
 
-    """A multilayer perceptron.
-
-    Args:
-        n_vocab (int): The size of vocabulary.
-        n_units (int): The number of units in a hidden or output layer.
-        dropout (float): The dropout ratio.
-
-    """
-
-    def __init__(self, n_layers, n_units, dropout=0.1):
+    def __init__(self, n_layers, n_units, n_output, dropout=0.1):
         super(MLP, self).__init__()
         for i in range(n_layers):
-            self.add_link(L.Linear(None, n_units))
+            if i < n_layers - 1:
+                nu = n_units
+            else:
+                nu = n_output
+            self.add_link(L.Linear(None, nu))
         self.dropout = dropout
         self.out_units = n_units
 
@@ -118,6 +95,55 @@ class MLP(chainer.ChainList):
             x = F.dropout(x, ratio=self.dropout)
             x = F.relu(link(x))
         return x
+
+class DoubleMaxClassifier(chainer.Chain):
+    """Multi-class classifier with one encoder encoding two input sequences.
+    """
+    def __init__(self, n_layers, n_vocab, n_units, n_class, dropout=0.1):
+        super(DoubleMaxClassifier, self).__init__()
+        with self.init_scope():
+            self.encoder = BiLSTMEncoder(n_layers=n_layers, n_vocab=n_vocab,
+                      n_units=n_units, dropout=dropout)
+            self.output = MLP(3, n_units, n_class, dropout=dropout)
+        self.dropout = dropout
+
+    def __call__(self, xs, ys, get_embed=False):
+        if get_embed:
+            concat_outputs, exs0, exs1 = self.predict(xs, get_embed=True)
+        else:
+            concat_outputs = self.predict(xs, get_embed=False)
+        concat_truths = F.concat(ys, axis=0)
+        loss = F.softmax_cross_entropy(concat_outputs, concat_truths)
+        accuracy = F.accuracy(concat_outputs, concat_truths)
+        reporter.report({'loss': loss.data}, self)
+        reporter.report({'accuracy': accuracy.data}, self)
+        if get_embed:
+            return loss, exs1 # FIXME
+        else:
+            return loss
+
+    def predict(self, xs, softmax=False, argmax=False, get_embed=False):
+        xs0, xs1 = xs # premise, hypothesis
+        if get_embed:
+            ys0, exs0 = self.encoder(xs0, get_embed=True)
+            ys1, exs1 = self.encoder(xs1, get_embed=True)
+        else:
+            ys0 = self.encoder(xs0, get_embed=False)
+            ys1 = self.encoder(xs1, get_embed=False)
+
+        ys0 = [F.max(y, axis=0) for y in ys0]
+        ys1 = [F.max(y, axis=0) for y in ys1]
+        ys0 = F.dropout(F.stack(ys0, axis=0), ratio=self.dropout)
+        ys1 = F.dropout(F.stack(ys1, axis=0), ratio=self.dropout)
+        ys = F.concat([ys0, ys1, F.absolute(ys0 - ys1), ys0 * ys1], axis=1)
+        ys = self.output(ys)
+        if softmax:
+            ys = F.softmax(ys).data
+        elif argmax:
+            ys = self.xp.argmax(ys.data, axis=1)
+        if get_embed:
+            return ys, exs0, exs1
+        return ys 
 
 
 class SingleMaxClassifier(chainer.Chain):
@@ -139,9 +165,9 @@ class SingleMaxClassifier(chainer.Chain):
     def __init__(self, n_layers, n_vocab, n_units, n_class, dropout=0.1):
         super(SingleMaxClassifier, self).__init__()
         with self.init_scope():
-            self.encoder = LSTMEncoder(n_layers=n_layers, n_vocab=n_vocab,
+            self.encoder = BiLSTMEncoder(n_layers=n_layers, n_vocab=n_vocab,
                       n_units=n_units, dropout=dropout)
-            self.output = L.Linear(n_units, n_class)
+            self.output = L.Linear(n_units * 2, n_class)
         self.dropout = dropout
 
     def __call__(self, xs, ys, get_embed=False):
@@ -150,7 +176,6 @@ class SingleMaxClassifier(chainer.Chain):
         else:
             concat_outputs = self.predict(xs, get_embed=False)
         concat_truths = F.concat(ys, axis=0)
-
         loss = F.softmax_cross_entropy(concat_outputs, concat_truths)
         accuracy = F.accuracy(concat_outputs, concat_truths)
         reporter.report({'loss': loss.data}, self)
@@ -162,9 +187,12 @@ class SingleMaxClassifier(chainer.Chain):
 
     def predict(self, xs, softmax=False, argmax=False, get_embed=False):
         if get_embed:
-            concat_encodings, exs = self.encoder(xs, get_embed=True)
+            ys, exs = self.encoder(xs, get_embed=True)
         else:
-            concat_encodings = self.encoder(xs, get_embed=False)
+            ys = self.encoder(xs, get_embed=False)
+
+        ys = [F.max(y, axis=0) for y in ys]
+        concat_encodings = F.stack(ys, axis=0)
         concat_encodings = F.dropout(concat_encodings, ratio=self.dropout)
         concat_outputs = self.output(concat_encodings)
         ret = concat_outputs

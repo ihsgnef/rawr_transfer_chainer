@@ -43,7 +43,8 @@ def main():
     parser.add_argument('--char-based', action='store_true')
 
     args = parser.parse_args()
-    args.out += '.{}'.format(args.dataset)
+    root = open('root').readline().strip()
+    args.out = os.path.join(root, args.out, args.dataset)
     print(json.dumps(args.__dict__, indent=2))
 
     # Load a dataset
@@ -94,17 +95,19 @@ def main():
 
     # Set up a trainer
     if args.dataset == 'snli':
-        convert_seq = convert_snli_seq
+        converter = convert_snli_seq
+    else:
+        converter = convert_seq
 
     updater = training.updater.StandardUpdater(
         train_iter, optimizer,
-        converter=convert_seq, device=args.gpu)
+        converter=converter, device=args.gpu)
     trainer = training.Trainer(updater, (args.epoch, 'epoch'), out=args.out)
 
     # Evaluate the model with the test dataset for each epoch
     trainer.extend(extensions.Evaluator(
         test_iter, model,
-        converter=convert_seq, device=args.gpu))
+        converter=converter, device=args.gpu))
 
     # Take a best snapshot
     record_trigger = training.triggers.MaxValueTrigger(
@@ -125,11 +128,10 @@ def main():
     # Save vocabulary and model's setting
     if not os.path.isdir(args.out):
         os.mkdir(args.out)
-    current = os.path.dirname(os.path.abspath(__file__))
-    vocab_path = os.path.join(current, args.out, 'vocab.json')
+    vocab_path = os.path.join(args.out, 'vocab.json')
     with open(vocab_path, 'w') as f:
         json.dump(vocab, f)
-    model_path = os.path.join(current, args.out, 'best_model.npz')
+    model_path = os.path.join(args.out, 'best_model.npz')
     model_setup = args.__dict__
     model_setup['vocab_path'] = vocab_path
     model_setup['model_path'] = model_path
