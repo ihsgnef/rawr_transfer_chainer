@@ -7,7 +7,7 @@ import shutil
 import tarfile
 from zipfile import ZipFile
 from six.moves import urllib
-import tempfile
+from nltk.tree import Tree
 
 import numpy
 
@@ -22,10 +22,55 @@ from nlp_utils import transform_snli_to_array
 URL_DBPEDIA = 'https://github.com/le-scientifique/torchDatasets/raw/master/dbpedia_csv.tar.gz'  # NOQA
 URL_IMDB = 'https://ai.stanford.edu/~amaas/data/sentiment/aclImdb_v1.tar.gz'
 URL_SNLI = 'https://nlp.stanford.edu/projects/snli/snli_1.0.zip'
+URL_SST = 'http://nlp.stanford.edu/sentiment/trainDevTestTrees_PTB.zip'
 URL_OTHER_BASE = 'https://raw.githubusercontent.com/harvardnlp/sent-conv-torch/master/data/'  # NOQA
 
 DATA_DIR = os.path.join(open('root').readline().strip(), 'data')
 os.makedirs(DATA_DIR, exist_ok=True)
+
+
+def download_sst():
+    print('download sst')
+    z_path = os.path.join(DATA_DIR, 'sst.zip')
+    if not os.path.exists(z_path):
+        urllib.request.urlretrieve(URL_SST, z_path)
+    with ZipFile(z_path) as zf:
+        zf.extractall(DATA_DIR)
+
+
+def read_sst(sst_dir, split, shrink=1, char_based=False):
+    dataset = []
+    f = open(os.path.join(sst_dir, '{}.txt'.format(split)))
+    for i, line in enumerate(f.readlines()):
+        if i % shrink != 0:
+            continue
+        tree = Tree.fromstring(line)
+        tokens = ' '.join(tree.leaves())
+        tokens = split_text(normalize_text(tokens), char_based)
+        label = int(tree.label())
+        dataset.append((tokens, label))
+    f.close()
+    return dataset
+
+
+def get_sst(vocab=None, shrink=1, char_based=False):
+    sst_dir = os.path.join(DATA_DIR, 'trees')
+    if not os.path.exists(sst_dir):
+        download_sst()
+
+    print('read sst')
+    train = read_sst(sst_dir, 'train', shrink=shrink, char_based=char_based)
+    test = read_sst(sst_dir, 'dev', shrink=shrink, char_based=char_based)
+
+    if vocab is None:
+        print('construct vocabulary based on frequency')
+        vocab = make_vocab(train)
+
+    train = transform_to_array(train, vocab)
+    test = transform_to_array(test, vocab)
+
+    return train, test, vocab
+
 
 def download_snli():
     print('download snli')
@@ -35,8 +80,10 @@ def download_snli():
     with ZipFile(z_path) as zf:
         zf.extractall(DATA_DIR)
 
+
 def most_common(lst):
     return max(set(lst), key=lst.count)
+
 
 def read_snli(snli_dir, split, shrink=1, char_based=False):
     path = os.path.join(snli_dir, 'snli_1.0_{}.jsonl'.format(split))
@@ -55,6 +102,7 @@ def read_snli(snli_dir, split, shrink=1, char_based=False):
             hypothesis = split_text(normalize_text(x['sentence2']), char_based)
             dataset.append((premise, hypothesis, label))
     return dataset
+
 
 def get_snli(vocab=None, shrink=1, char_based=False):
     snli_dir = os.path.join(DATA_DIR, 'snli_1.0')
