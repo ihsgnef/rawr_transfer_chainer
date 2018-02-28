@@ -160,10 +160,10 @@ def get_imdb(vocab=None, shrink=1, fine_grained=False,
         download_imdb()
 
     print('read imdb')
-    train = read_imdb(imdb_path, 'train',
+    train = read_imdb(DATA_DIR, 'train',
                       shrink=shrink, fine_grained=fine_grained,
                       char_based=char_based)
-    test = read_imdb(imdb_path, 'test',
+    test = read_imdb(DATA_DIR, 'test',
                      shrink=shrink, fine_grained=fine_grained,
                      char_based=char_based)
 
@@ -235,3 +235,4 @@ def get_other_text_dataset(name, vocab=None, shrink=1,
 
 if __name__ == '__main__':
     train, test, vocab = get_snli()
+    print(len(train))

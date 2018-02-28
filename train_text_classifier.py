@@ -13,6 +13,7 @@ from chainer.training import extensions
 
 import nets
 from nlp_utils import convert_seq
+from nlp_utils import convert_snli_seq
 import text_datasets
 
 
@@ -35,18 +36,22 @@ def main():
     parser.add_argument('--dropout', '-d', type=float, default=0.4,
                         help='Dropout rate')
     parser.add_argument('--dataset', '-data', default='imdb.binary',
-                        choices=['dbpedia', 'imdb.binary', 'imdb.fine',
+                        choices=['snli', 'dbpedia', 'imdb.binary', 'imdb.fine',
                                  'TREC', 'stsa.binary', 'stsa.fine',
                                  'custrev', 'mpqa', 'rt-polarity', 'subj'],
                         help='Name of dataset.')
     parser.add_argument('--char-based', action='store_true')
 
     args = parser.parse_args()
+    args.out += '.{}'.format(args.dataset)
     print(json.dumps(args.__dict__, indent=2))
 
     # Load a dataset
     if args.dataset == 'dbpedia':
         train, test, vocab = text_datasets.get_dbpedia(
+            char_based=args.char_based)
+    elif args.dataset == 'snli':
+        train, test, vocab = text_datasets.get_snli(
             char_based=args.char_based)
     elif args.dataset.startswith('imdb.'):
         train, test, vocab = text_datasets.get_imdb(
@@ -60,7 +65,10 @@ def main():
     print('# train data: {}'.format(len(train)))
     print('# test  data: {}'.format(len(test)))
     print('# vocab: {}'.format(len(vocab)))
-    n_class = len(set([int(d[1]) for d in train]))
+    if args.dataset == 'snli':
+        n_class = len(set([int(d[2]) for d in train]))
+    else:
+        n_class = len(set([int(d[1]) for d in train]))
     print('# class: {}'.format(n_class))
 
     train_iter = chainer.iterators.SerialIterator(train, args.batchsize)
@@ -68,8 +76,12 @@ def main():
                                                  repeat=False, shuffle=False)
 
     # Setup a model
-    model = nets.SingleMaxClassifier(n_layers=args.layer, n_vocab=len(vocab),
-                      n_units=args.unit, n_class=n_class, dropout=args.dropout)
+    if args.dataset == 'snli':
+        model = nets.DoubleMaxClassifier(n_layers=args.layer, n_vocab=len(vocab),
+                          n_units=args.unit, n_class=n_class, dropout=args.dropout)
+    else:
+        model = nets.SingleMaxClassifier(n_layers=args.layer, n_vocab=len(vocab),
+                          n_units=args.unit, n_class=n_class, dropout=args.dropout)
     if args.gpu >= 0:
         # Make a specified GPU current
         chainer.backends.cuda.get_device_from_id(args.gpu).use()
@@ -81,6 +93,9 @@ def main():
     optimizer.add_hook(chainer.optimizer.WeightDecay(1e-4))
 
     # Set up a trainer
+    if args.dataset == 'snli':
+        convert_seq = convert_snli_seq
+
     updater = training.updater.StandardUpdater(
         train_iter, optimizer,
         converter=convert_seq, device=args.gpu)
