@@ -1,7 +1,9 @@
+import os
 import json
 import pickle
 import numpy as np
 import itertools
+import argparse
 from tqdm import tqdm
 
 import cupy
@@ -18,7 +20,7 @@ def get_onehot_grad(model, xs, ys=None):
             ys = model.predict(xs, argmax=True)
             ys = F.expand_dims(ys, axis=1)
             ys = [y for y in ys]
-    loss, exs = model(xs, ys, get_embed=True)
+    loss, exs = model(xs, ys, get_embed=True, no_dropout=True)
     exs_grad = chainer.grad([loss], exs)
     ex_sections = np.cumsum([ex.shape[0] for ex in exs[:-1]])
     exs = F.concat(exs, axis=0)
@@ -55,7 +57,7 @@ def remove_one(model, xs, n_beams, indices, removed_indices, max_beam_size=5):
             contienu
         
         coordinates = sorted(coordinates, key=lambda x: -x[0])
-        coordinates = [c for _, c in coordinates]
+        coordinates = [c for _, c in coordinates][:max_beam_size]
         for i, j in coordinates:
             x = xs[i].copy()
             x = xp.concatenate([x[:j], x[j+1:]], axis=0)
@@ -84,7 +86,7 @@ def get_rawr(model, xs, max_beam_size=5):
                 model, xs, n_beams, indices, removed_indices, max_beam_size)
         with chainer.using_config('train', False):
             ys = model.predict(xs, argmax=True)
-        
+
         new_n_beams = []
         start = 0
         remained_indices = []
@@ -105,8 +107,8 @@ def get_rawr(model, xs, max_beam_size=5):
                     final_xs[example_idx] = [x]
                 elif len(x) == final_length[example_idx]:
                     if x not in final_xs[example_idx]:
-                        final_xs.append(x)
-                        final_removed.append(removed_indices[i])
+                        final_xs[example_idx].append(x)
+                        final_removed[example_idx].append(removed_indices[i])
                 if len(x) == 1:
                     # only eos left
                     continue
@@ -131,23 +133,33 @@ class Bunch(object):
     self.__dict__.update(adict)
     
 def main():
-    with open('result/rnn/args.json') as f:
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--load', required=True)
+    args_dir = os.path.join(parser.parse_args().load, 'args.json')
+    with open(args_dir) as f:
         args = Bunch(json.load(f))
-        
+
     print(json.dumps(args.__dict__, indent=2))
-    
+
     # Load a dataset
+    with open(args.vocab_path) as f:
+        vocab = json.load(f)
+
     if args.dataset == 'dbpedia':
         train, test, vocab = text_datasets.get_dbpedia(
+            vocab=vocab, char_based=args.char_based)
+    elif args.dataset == 'sst':
+        train, test, vocab = text_datasets.get_sst(
             char_based=args.char_based)
     elif args.dataset.startswith('imdb.'):
         train, test, vocab = text_datasets.get_imdb(
+            vocab=vocab,
             fine_grained=args.dataset.endswith('.fine'),
             char_based=args.char_based)
     elif args.dataset in ['TREC', 'stsa.binary', 'stsa.fine',
                           'custrev', 'mpqa', 'rt-polarity', 'subj']:
         train, test, vocab = text_datasets.get_other_text_dataset(
-            args.dataset, char_based=args.char_based)
+            args.dataset, vocab=vocab, char_based=args.char_based)
     
     print('# train data: {}'.format(len(train)))
     print('# test  data: {}'.format(len(test)))
@@ -158,22 +170,18 @@ def main():
 
     # FIXME
     args.batchsize = 64
-    max_beam_size = 1
+    max_beam_size = 5
     
     train_iter = chainer.iterators.SerialIterator(train, args.batchsize)
     test_iter = chainer.iterators.SerialIterator(test, args.batchsize,
                                                  repeat=False, shuffle=False)
     
-    # Setup a model
-    if args.model == 'rnn':
-        Encoder = nets.RNNEncoder
-    elif args.model == 'cnn':
-        Encoder = nets.CNNEncoder
-    elif args.model == 'bow':
-        Encoder = nets.BOWMLPEncoder
-    encoder = Encoder(n_layers=args.layer, n_vocab=len(vocab),
-                      n_units=args.unit, dropout=args.dropout)
-    model = nets.TextClassifier(encoder, n_class)
+    if args.dataset == 'snli':
+        model = nets.DoubleMaxClassifier(n_layers=args.layer, n_vocab=len(vocab),
+                          n_units=args.unit, n_class=n_class, dropout=args.dropout)
+    else:
+        model = nets.SingleMaxClassifier(n_layers=args.layer, n_vocab=len(vocab),
+                          n_units=args.unit, n_class=n_class, dropout=args.dropout)
     if args.gpu >= 0:
         # Make a specified GPU current
         chainer.backends.cuda.get_device_from_id(args.gpu).use()
@@ -206,7 +214,7 @@ def main():
         for example_idx in range(len(xs)):
             oi = xs[example_idx].tolist() # original input
             op = int(ys_0[example_idx]) # original predictoin
-            os = ss_0[example_idx] # original output distribution
+            oos = ss_0[example_idx] # original output distribution
             label = int(batch['ys'][example_idx])
             checkpoint.append([])
             for i in range(start, start + n_finals[example_idx]):
@@ -218,11 +226,12 @@ def main():
                          'reduced_input': ri,
                          'original_prediction': op,
                          'reduced_prediction': rp,
-                         'original_scores': os,
+                         'original_scores': oos,
                          'reduced_scores': rs,
+                         'removed_indices': rr,
                          'label': label}
                 checkpoint[-1].append(entry)
-    with open('result/rnn/rawr_dev.pkl', 'wb') as f:
+    with open(os.path.join(args.out, 'rawr_dev.pkl'), 'wb') as f:
         pickle.dump(checkpoint, f)
 
 if __name__ == '__main__':

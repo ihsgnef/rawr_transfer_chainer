@@ -68,8 +68,9 @@ class BiLSTMEncoder(chainer.Chain):
         self.out_units = n_units
         self.dropout = dropout
 
-    def __call__(self, xs, get_embed=False):
-        exs = sequence_embed(self.embed, xs, self.dropout)
+    def __call__(self, xs, get_embed=False, no_dropout=False):
+        ratio = 0.0 if no_dropout else self.dropout
+        exs = sequence_embed(self.embed, xs, ratio)
         _, _, ys = self.encoder(None, None, exs)
         assert len(ys) == len(xs)
         if get_embed:
@@ -90,9 +91,10 @@ class MLP(chainer.ChainList):
         self.dropout = dropout
         self.out_units = n_units
 
-    def __call__(self, x):
+    def __call__(self, x, no_dropout=False):
         for i, link in enumerate(self.children()):
-            x = F.dropout(x, ratio=self.dropout)
+            ratio = 0.0 if no_dropout else self.dropout
+            x = F.dropout(x, ratio=ratio)
             x = F.relu(link(x))
         return x
 
@@ -107,11 +109,13 @@ class DoubleMaxClassifier(chainer.Chain):
             self.output = MLP(3, n_units, n_class, dropout=dropout)
         self.dropout = dropout
 
-    def __call__(self, xs, ys, get_embed=False):
+    def __call__(self, xs, ys, get_embed=False, no_dropout=False):
         if get_embed:
-            concat_outputs, exs0, exs1 = self.predict(xs, get_embed=True)
+            concat_outputs, exs0, exs1 = self.predict(
+                    xs, get_embed=True, no_dropout=no_dropout)
         else:
-            concat_outputs = self.predict(xs, get_embed=False)
+            concat_outputs = self.predict(
+                    xs, get_embed=False, no_dropout=no_dropout)
         concat_truths = F.concat(ys, axis=0)
         loss = F.softmax_cross_entropy(concat_outputs, concat_truths)
         accuracy = F.accuracy(concat_outputs, concat_truths)
@@ -122,7 +126,8 @@ class DoubleMaxClassifier(chainer.Chain):
         else:
             return loss
 
-    def predict(self, xs, softmax=False, argmax=False, get_embed=False):
+    def predict(self, xs, softmax=False, argmax=False, get_embed=False,
+            no_dropout=False):
         xs0, xs1 = xs # premise, hypothesis
         if get_embed:
             ys0, exs0 = self.encoder(xs0, get_embed=True)
@@ -133,10 +138,11 @@ class DoubleMaxClassifier(chainer.Chain):
 
         ys0 = [F.max(y, axis=0) for y in ys0]
         ys1 = [F.max(y, axis=0) for y in ys1]
-        ys0 = F.dropout(F.stack(ys0, axis=0), ratio=self.dropout)
-        ys1 = F.dropout(F.stack(ys1, axis=0), ratio=self.dropout)
+        ratio = 0.0 if no_dropout else self.dropout
+        ys0 = F.dropout(F.stack(ys0, axis=0), ratio=ratio)
+        ys1 = F.dropout(F.stack(ys1, axis=0), ratio=ratio)
         ys = F.concat([ys0, ys1, F.absolute(ys0 - ys1), ys0 * ys1], axis=1)
-        ys = self.output(ys)
+        ys = self.output(ys, no_dropout)
         if softmax:
             ys = F.softmax(ys).data
         elif argmax:
@@ -170,11 +176,13 @@ class SingleMaxClassifier(chainer.Chain):
             self.output = L.Linear(n_units * 2, n_class)
         self.dropout = dropout
 
-    def __call__(self, xs, ys, get_embed=False):
+    def __call__(self, xs, ys, get_embed=False, no_dropout=False):
         if get_embed:
-            concat_outputs, exs = self.predict(xs, get_embed=True)
+            concat_outputs, exs = self.predict(
+                    xs, get_embed=True, no_dropout=no_dropout)
         else:
-            concat_outputs = self.predict(xs, get_embed=False)
+            concat_outputs = self.predict(
+                    xs, get_embed=False, no_dropout=no_dropout)
         concat_truths = F.concat(ys, axis=0)
         loss = F.softmax_cross_entropy(concat_outputs, concat_truths)
         accuracy = F.accuracy(concat_outputs, concat_truths)
@@ -185,15 +193,17 @@ class SingleMaxClassifier(chainer.Chain):
         else:
             return loss
 
-    def predict(self, xs, softmax=False, argmax=False, get_embed=False):
+    def predict(self, xs, softmax=False, argmax=False, get_embed=False,
+            no_dropout=False):
         if get_embed:
-            ys, exs = self.encoder(xs, get_embed=True)
+            ys, exs = self.encoder(xs, get_embed, no_dropout)
         else:
-            ys = self.encoder(xs, get_embed=False)
+            ys = self.encoder(xs, get_embed, no_dropout)
 
         ys = [F.max(y, axis=0) for y in ys]
         concat_encodings = F.stack(ys, axis=0)
-        concat_encodings = F.dropout(concat_encodings, ratio=self.dropout)
+        ratio = 0.0 if no_dropout else self.dropout
+        concat_encodings = F.dropout(concat_encodings, ratio=ratio)
         concat_outputs = self.output(concat_encodings)
         ret = concat_outputs
         if softmax:
