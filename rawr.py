@@ -14,6 +14,7 @@ import nets
 import text_datasets
 from nlp_utils import convert_seq
 
+
 def get_onehot_grad(model, xs, ys=None):
     if ys is None:
         with chainer.using_config('train', False):
@@ -25,7 +26,8 @@ def get_onehot_grad(model, xs, ys=None):
     ex_sections = np.cumsum([ex.shape[0] for ex in exs[:-1]])
     exs = F.concat(exs, axis=0)
     exs_grad = F.concat(exs_grad, axis=0)
-    onehot_grad = F.split_axis(F.sum(exs_grad * exs, axis=1), ex_sections, axis=0)
+    onehot_grad = F.sum(exs_grad * exs, axis=1)
+    onehot_grad = F.split_axis(onehot_grad, ex_sections, axis=0)
     return onehot_grad
 
 
@@ -35,18 +37,18 @@ def remove_one(model, xs, n_beams, indices, removed_indices, max_beam_size=5):
     xp = cupy.get_array_module(*onehot_grad)
     # don't remove <eos>
     order = [xp.argsort(x[:-1]).tolist() for x in onehot_grad]
-    
+
     new_xs = []
     new_n_beams = []
     new_indices = []
     new_removed_indices = []
-    
+
     start = 0
     for example_idx in range(n_examples):
         if n_beams[example_idx] == 0:
             new_n_beams.append(0)
             continue
-        
+
         coordinates = []
         for i in range(start, start + n_beams[example_idx]):
             for j in order[i][:max_beam_size]:
@@ -54,8 +56,8 @@ def remove_one(model, xs, n_beams, indices, removed_indices, max_beam_size=5):
         if len(coordinates) == 0:
             new_n_beams.append(0)
             start += n_beams[example_idx]
-            contienu
-        
+            continue
+
         coordinates = sorted(coordinates, key=lambda x: -x[0])
         coordinates = [c for _, c in coordinates][:max_beam_size]
         for i, j in coordinates:
@@ -68,19 +70,20 @@ def remove_one(model, xs, n_beams, indices, removed_indices, max_beam_size=5):
         start += n_beams[example_idx]
     return new_xs, new_n_beams, new_indices, new_removed_indices
 
+
 def get_rawr(model, xs, max_beam_size=5):
     n_examples = len(xs)
     n_beams = [1 for _ in xs]
     indices = [list(range(x.shape[0])) for x in xs]
     removed_indices = [[] for _ in xs]
-    
+
     final_xs = [[x.tolist()] for x in xs]
     final_removed = [[[]] for _ in xs]
     final_length = [x.shape[0] for x in xs]
-    
+
     with chainer.using_config('train', False):
         ys_0 = model.predict(xs, argmax=True)
-    
+
     while True:
         xs, n_beams, indices, removed_indices = remove_one(
                 model, xs, n_beams, indices, removed_indices, max_beam_size)
@@ -94,12 +97,12 @@ def get_rawr(model, xs, max_beam_size=5):
             if n_beams[example_idx] == 0:
                 new_n_beams.append(0)
                 continue
-            
+
             cnt = 0
             for i in range(start, start + n_beams[example_idx]):
                 if not ys[i] == ys_0[example_idx]:
                     continue
-                
+
                 x = xs[i].tolist()
                 if len(x) < final_length[example_idx]:
                     final_length[example_idx] = len(x)
@@ -112,15 +115,15 @@ def get_rawr(model, xs, max_beam_size=5):
                 if len(x) == 1:
                     # only eos left
                     continue
-                    
+
                 remained_indices.append(i)
                 cnt += 1
             new_n_beams.append(cnt)
             start += n_beams[example_idx]
-            
+
         if len(remained_indices) == 0:
             break
-            
+
         xs = [xs[i] for i in remained_indices]
         indices = [indices[i] for i in remained_indices]
         removed_indices = [removed_indices[i] for i in remained_indices]
@@ -129,9 +132,11 @@ def get_rawr(model, xs, max_beam_size=5):
 
 
 class Bunch(object):
-  def __init__(self, adict):
-    self.__dict__.update(adict)
-    
+
+    def __init__(self, adict):
+        self.__dict__.update(adict)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--load', required=True)
@@ -160,34 +165,36 @@ def main():
                           'custrev', 'mpqa', 'rt-polarity', 'subj']:
         train, test, vocab = text_datasets.get_other_text_dataset(
             args.dataset, vocab=vocab, char_based=args.char_based)
-    
+
     print('# train data: {}'.format(len(train)))
     print('# test  data: {}'.format(len(test)))
     print('# vocab: {}'.format(len(vocab)))
     n_class = len(set([int(d[1]) for d in train]))
     print('# class: {}'.format(n_class))
-    i_to_word = {v: k for k, v in vocab.items()}
+    # i_to_word = {v: k for k, v in vocab.items()}
 
     # FIXME
     args.batchsize = 64
     max_beam_size = 5
-    
-    train_iter = chainer.iterators.SerialIterator(train, args.batchsize)
+
+    # train_iter = chainer.iterators.SerialIterator(train, args.batchsize)
     test_iter = chainer.iterators.SerialIterator(test, args.batchsize,
                                                  repeat=False, shuffle=False)
-    
+
     if args.dataset == 'snli':
-        model = nets.DoubleMaxClassifier(n_layers=args.layer, n_vocab=len(vocab),
-                          n_units=args.unit, n_class=n_class, dropout=args.dropout)
+        model = nets.DoubleMaxClassifier(
+                n_layers=args.layer, n_vocab=len(vocab),
+                n_units=args.unit, n_class=n_class, dropout=args.dropout)
     else:
-        model = nets.SingleMaxClassifier(n_layers=args.layer, n_vocab=len(vocab),
-                          n_units=args.unit, n_class=n_class, dropout=args.dropout)
+        model = nets.SingleMaxClassifier(
+                n_layers=args.layer, n_vocab=len(vocab),
+                n_units=args.unit, n_class=n_class, dropout=args.dropout)
     if args.gpu >= 0:
         # Make a specified GPU current
         chainer.backends.cuda.get_device_from_id(args.gpu).use()
         model.to_gpu()  # Copy the model to the GPU
     chainer.serializers.load_npz(args.model_path, model)
-    
+
     checkpoint = []
     for batch_idx, batch in enumerate(tqdm(test_iter)):
         # if batch_idx > 10:
@@ -195,8 +202,8 @@ def main():
 
         batch = convert_seq(batch, device=args.gpu)
         xs = batch['xs']
-        reduced_xs, removed_indices = get_rawr(model, xs,
-                max_beam_size=max_beam_size)
+        reduced_xs, removed_indices = get_rawr(
+                model, xs, max_beam_size=max_beam_size)
 
         xp = cupy.get_array_module(*xs)
         n_finals = [len(r) for r in reduced_xs]
@@ -209,12 +216,12 @@ def main():
             ss_1 = xp.asnumpy(model.predict(reduced_xs, softmax=True))
             ys_0 = np.argmax(ss_0, axis=1)
             ys_1 = np.argmax(ss_1, axis=1)
-        
+
         start = 0
         for example_idx in range(len(xs)):
-            oi = xs[example_idx].tolist() # original input
-            op = int(ys_0[example_idx]) # original predictoin
-            oos = ss_0[example_idx] # original output distribution
+            oi = xs[example_idx].tolist()  # original input
+            op = int(ys_0[example_idx])  # original predictoin
+            oos = ss_0[example_idx]  # original output distribution
             label = int(batch['ys'][example_idx])
             checkpoint.append([])
             for i in range(start, start + n_finals[example_idx]):
@@ -233,6 +240,7 @@ def main():
                 checkpoint[-1].append(entry)
     with open(os.path.join(args.out, 'rawr_dev.pkl'), 'wb') as f:
         pickle.dump(checkpoint, f)
+
 
 if __name__ == '__main__':
     main()
