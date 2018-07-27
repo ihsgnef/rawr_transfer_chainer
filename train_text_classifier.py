@@ -78,11 +78,13 @@ def main():
 
     # Setup a model
     if args.dataset == 'snli':
-        model = nets.DoubleMaxClassifier(n_layers=args.layer, n_vocab=len(vocab),
-                          n_units=args.unit, n_class=n_class, dropout=args.dropout)
+        model = nets.DoubleMaxClassifier(
+                n_layers=args.layer, n_vocab=len(vocab),
+                n_units=args.unit, n_class=n_class, dropout=args.dropout)
     else:
-        model = nets.SingleMaxClassifier(n_layers=args.layer, n_vocab=len(vocab),
-                          n_units=args.unit, n_class=n_class, dropout=args.dropout)
+        model = nets.SingleMaxClassifier(
+                n_layers=args.layer, n_vocab=len(vocab),
+                n_units=args.unit, n_class=n_class, dropout=args.dropout)
     if args.gpu >= 0:
         # Make a specified GPU current
         chainer.backends.cuda.get_device_from_id(args.gpu).use()
