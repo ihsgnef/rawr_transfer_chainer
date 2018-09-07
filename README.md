@@ -27,7 +27,7 @@ Please consider citing [1] if you found this code or our work beneficial to your
 
 ```
 @article{feng2018pathologies,
-  title={Interpreting Neural Networks with Nearest Neighbors},
+  title={Pathologies of Neural Models Make Interpretations Difficult},
   author={Shi Feng and Eric Wallace and Alvin Grissom II and Mohit Iyyer and Pedro Rodriguez and Jordan Boyd-Graber},
   journal={Empirical Methods in Natural Language Processing},  
   year={2018},  
