@@ -3,7 +3,7 @@
 This is the code for the 2018 EMNLP Paper, [Pathologies of Neural Models Make Interpretations Difficult](https://arxiv.org/abs/1804.07781). 
 
 This repository contains the code for input reduction. If you want to apply input reduction to your task or model, we recommend
-taking a look at the ``rawr.py'' file. From there, you can learn how to calculate gradients of the output with the respect to the input.
+taking a look at the ```rawr.py``` file. From there, you can learn how to calculate gradients of the prediction with the respect to the input.
 
 ## Dependencies
 
